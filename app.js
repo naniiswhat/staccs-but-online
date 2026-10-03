@@ -23,6 +23,14 @@ function getCardByVisual(vx, vy, vz) {
     return null;
 }
 
+function shuffle(array) {
+    for (let i = array.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [array[i], array[j]] = [array[j], array[i]];
+    }
+    return array;
+}
+
 function generateDeck() {
     let deck = [];
     SUITS.forEach(suit => {
@@ -30,7 +38,7 @@ function generateDeck() {
         FACES.forEach(val => deck.push({ id: `${val}_${suit}`, type: 'face', suit: suit, value: val }));
         SPECIALS.forEach(val => deck.push({ id: `${val}_${suit}`, type: 'special', suit: suit, value: val }));
     });
-    return deck.sort(() => Math.random() - 0.5);
+    return shuffle(deck); // Proper randomization
 }
 
 // ==========================================
@@ -60,7 +68,7 @@ function startGame(numPlayers) {
         if (firstCard.type !== 'number') gameState.drawPile.push(firstCard);
     } while (firstCard.type !== 'number');
 
-    executePlacement(firstCard, 0, 0, 0, null, true);
+    executePlacement([firstCard], 0, 0, 0, null, true);
 }
 
 function getVisualCoords(targetX, targetY, targetZ) {
@@ -159,6 +167,15 @@ function applySpecialEffects(card) {
 }
 
 function nextTurn() {
+    const currentPlayer = gameState.players[gameState.currentPlayerIndex];
+
+    // PENALTY: If you end your turn with 1 card and forgot to call it!
+    if (currentPlayer.hand.length === 1 && !currentPlayer.hasCalledUhOh) {
+        showToast(`Player ${currentPlayer.id + 1} forgot UH OH! Penalty drawn.`);
+        if (gameState.drawPile.length > 0) currentPlayer.hand.push(gameState.drawPile.shift());
+        if (gameState.drawPile.length > 0) currentPlayer.hand.push(gameState.drawPile.shift());
+    }
+
     // Tick down active zero blocks
     board.forEach(c => {
         if (c.zeroBlockTurns > 0) c.zeroBlockTurns--;
@@ -177,17 +194,74 @@ function lockPreviousCards() {
 // ==========================================
 const boardDOM = document.getElementById('gameBoard');
 const renderedCards = new Set();
-let selectedCardIndex = null;
+let selectedCardIndices = [];
 let pendingWildMove = null;
 let pendingWildSuit = null;
 
-function executePlacement(card, x, y, z, clickedSurfaceEl = null, forcePlace = false) {
+function executePlacement(cards, x, y, z, clickedSurfaceEl = null, forcePlace = false) {
     const currentPlayer = gameState.players[gameState.currentPlayerIndex];
-    const moveCheck = isValidMove(card, x, y, z);
 
-    if (forcePlace || moveCheck.valid) {
+    let validChain = true;
+    let failReason = "";
 
-        const vCoords = getVisualCoords(x, y, z);
+    if (!forcePlace) {
+        // 1. Validate the primary card against the actual board
+        const moveCheck = isValidMove(cards[0], x, y, z);
+        if (!moveCheck.valid) {
+            triggerErrorFeedback(clickedSurfaceEl, moveCheck.reason);
+            return;
+        }
+
+        // 2. Simulate the combo chain to test for space and occlusion
+        let tempCoords = [];
+        for (let i = 0; i < cards.length; i++) {
+            let tx = x + i; // Combos chain outward on the X axis
+            let ty = y;
+            let tz = z;
+
+            if (i > 0) {
+                if (getCardAt(tx, ty, tz)) {
+                    validChain = false;
+                    failReason = "COMBO BLOCKED: Not enough space for the full chain.";
+                    break;
+                }
+                const vCoords = getVisualCoords(tx, ty, tz);
+                if (isOccludedVisual(vCoords.vx, vCoords.vy, vCoords.vz)) {
+                    validChain = false;
+                    failReason = `COMBO BLOCKED: Card ${i + 1} is visually covered.`;
+                    break;
+                }
+            }
+
+            // Temporarily mount card to map so the next card can calculate its 3D anchor
+            let tempCard = { ...cards[i] };
+            const vCoords = getVisualCoords(tx, ty, tz);
+            tempCard.vx = vCoords.vx;
+            tempCard.vy = vCoords.vy;
+            tempCard.vz = vCoords.vz;
+            tempCard.globalRotation = gameState.currentRotation;
+            board.set(`${tx},${ty},${tz}`, tempCard);
+            tempCoords.push(`${tx},${ty},${tz}`);
+        }
+
+        // Rollback the simulation
+        tempCoords.forEach(c => board.delete(c));
+
+        if (!validChain) {
+            triggerErrorFeedback(clickedSurfaceEl, failReason);
+            return;
+        }
+    }
+
+    // --- ACTUAL PLACEMENT ---
+    let keepTurn = false;
+    for (let i = 0; i < cards.length; i++) {
+        let card = cards[i];
+        let tx = x + i;
+        let ty = y;
+        let tz = z;
+
+        const vCoords = getVisualCoords(tx, ty, tz);
         card.vx = vCoords.vx;
         card.vy = vCoords.vy;
         card.vz = vCoords.vz;
@@ -197,18 +271,39 @@ function executePlacement(card, x, y, z, clickedSurfaceEl = null, forcePlace = f
         card.pixelY = (card.vx * (CARD_HEIGHT / 4)) + (card.vy * (CARD_HEIGHT / 4)) - (card.vz * (CARD_HEIGHT / 2));
         card.zIndex = (card.vx + card.vy) + (card.vz * 10);
 
-        board.set(`${x},${y},${z}`, card);
-        if (currentPlayer && selectedCardIndex !== null) currentPlayer.hand.splice(selectedCardIndex, 1);
-        selectedCardIndex = null;
+        board.set(`${tx},${ty},${tz}`, card);
+
+        if (currentPlayer) {
+            let handIndex = currentPlayer.hand.indexOf(card);
+            if (handIndex > -1) currentPlayer.hand.splice(handIndex, 1);
+        }
 
         if (board.size > 1) {
-            const keepTurn = applySpecialEffects(card);
-            if (!keepTurn) nextTurn();
+            if (applySpecialEffects(card)) keepTurn = true;
         }
-        refreshUI();
-    } else {
-        triggerErrorFeedback(clickedSurfaceEl, moveCheck.reason);
     }
+
+    // --- WIN CONDITION & PENALTY CHECK ---
+    if (currentPlayer && currentPlayer.hand.length === 0) {
+        if (currentPlayer.hasCalledUhOh) {
+            // THEY WIN! 
+            document.getElementById('hud').innerHTML = `<h2 style="color: #facc15; font-size: 2rem;">PLAYER ${currentPlayer.id + 1} WINS! 🎉</h2>`;
+            document.getElementById('playerHand').innerHTML = '';
+            showToast("WE HAVE A WINNER!");
+            return; // Halt the game loop entirely
+        } else {
+            // Caught trying to sneak a win!
+            showToast("Forgot to call UH OH! Penalty: Draw 2 cards.");
+            if (gameState.drawPile.length > 0) currentPlayer.hand.push(gameState.drawPile.shift());
+            if (gameState.drawPile.length > 0) currentPlayer.hand.push(gameState.drawPile.shift());
+            currentPlayer.hasCalledUhOh = false;
+            keepTurn = false; // Force turn pass on penalty
+        }
+    }
+
+    selectedCardIndices = [];
+    if (board.size > 1 && !keepTurn && currentPlayer.hand.length > 0) nextTurn();
+    refreshUI();
 }
 
 function createCardElement(card, x, y, z) {
@@ -218,48 +313,53 @@ function createCardElement(card, x, y, z) {
     cardDiv.style.top = '50%'; cardDiv.style.left = '50%';
     cardDiv.style.marginTop = `-${CARD_HEIGHT / 2}px`; cardDiv.style.marginLeft = `-${CARD_WIDTH / 2}px`;
 
-    let logicalTop = '', logicalFace = '', logicalSide = '';
-    let colorTop = 'var(--text-dark)', colorFace = 'var(--text-dark)', colorSide = 'var(--text-dark)';
     const suitColor = (card.suit === 'hearts' || card.suit === 'diamonds') ? 'var(--text-red)' : 'var(--text-dark)';
 
-    if (card.value === 'WILD') {
-        logicalTop = card.wildResolved ? SUIT_SYMBOLS[card.suit] : 'W';
-        logicalFace = 'W'; logicalSide = 'W';
-        if (card.wildResolved) colorTop = suitColor;
-    } else if (card.type === 'number' || card.value === '0') {
-        logicalTop = SUIT_SYMBOLS[card.suit]; colorTop = suitColor;
-        logicalFace = SUIT_SYMBOLS[card.suit]; colorFace = suitColor;
-        logicalSide = card.value; colorSide = 'var(--text-dark)';
-    } else if (card.type === 'face') {
-        logicalTop = SUIT_SYMBOLS[card.suit]; colorTop = suitColor;
-        logicalFace = card.value; colorFace = 'var(--text-dark)';
-        logicalSide = card.value; colorSide = 'var(--text-dark)';
+    // 1. Build the permanent physical content for the 3 sides
+    let physicalTopContent = card.value === 'WILD' && !card.wildResolved ? 'W' : (card.wildResolved ? SUIT_SYMBOLS[card.suit] : SUIT_SYMBOLS[card.suit]);
+    let physicalFaceContent = card.value === 'WILD' ? 'W' : (card.type === 'face' ? card.value : SUIT_SYMBOLS[card.suit]);
+    let physicalSideContent = card.value === 'WILD' ? 'W' : card.value;
+
+    let colorTop = card.wildResolved ? suitColor : (card.value === 'WILD' ? 'var(--text-dark)' : suitColor);
+    let colorFace = card.value === 'WILD' ? 'var(--text-dark)' : (card.type === 'face' ? 'var(--text-dark)' : suitColor);
+    let colorSide = 'var(--text-dark)';
+
+    // 2. Bond the HTML elements together securely
+    // FIX: Removed the solid .text-content span so ONLY the watermark renders on TOP
+    let htmlTop = `<span class="watermark" style="color: ${colorTop};">${physicalTopContent}</span>`;
+
+    let htmlFace = `<span class="text-content" style="color: ${colorFace};">${physicalFaceContent}</span>`;
+    if (card.value !== 'WILD') {
+        htmlFace += `<span class="index-mark" style="color: ${colorFace};">${card.value}</span>`;
     }
 
-    let visualTop = '', visualFace = '', visualSide = '';
-    let vColorTop = '', vColorFace = '', vColorSide = '';
+    let htmlSide = `<span class="text-content" style="color: ${colorSide};">${physicalSideContent}</span>`;
+
+    // 3. Map the bonded physical planes to the visual screen axes based on rotation
+    let vHtmlTop, vHtmlFace, vHtmlSide;
     let axisTop = 'Z', axisFace = 'Y', axisSide = 'X';
 
     const rot = card.globalRotation || 0;
     if (rot === 0) {
-        visualTop = logicalTop; vColorTop = colorTop; axisTop = 'Z';
-        visualFace = logicalFace; vColorFace = colorFace; axisFace = 'Y';
-        visualSide = logicalSide; vColorSide = colorSide; axisSide = 'X';
-    } else if (rot === 1) {
-        visualTop = logicalFace; vColorTop = colorFace; axisTop = 'Y';
-        visualSide = logicalTop; vColorSide = colorTop; axisSide = 'Z';
-        visualFace = logicalSide; vColorFace = colorSide; axisFace = 'X';
-    } else if (rot === 2) {
-        visualTop = logicalSide; vColorTop = colorSide; axisTop = 'X';
-        visualSide = logicalFace; vColorSide = colorFace; axisSide = 'Y';
-        visualFace = logicalTop; vColorFace = colorTop; axisFace = 'Z';
+        vHtmlTop = htmlTop; axisTop = 'Z';
+        vHtmlFace = htmlFace; axisFace = 'Y';
+        vHtmlSide = htmlSide; axisSide = 'X';
+    } else if (rot === 1) { // Rotated Right
+        vHtmlTop = htmlFace; axisTop = 'Y';
+        vHtmlSide = htmlTop; axisSide = 'Z';
+        vHtmlFace = htmlSide; axisFace = 'X';
+    } else if (rot === 2) { // Rotated Left
+        vHtmlTop = htmlSide; axisTop = 'X';
+        vHtmlSide = htmlFace; axisSide = 'Y';
+        vHtmlFace = htmlTop; axisFace = 'Z';
     }
 
+    // 4. Inject the final rotated mapping
     cardDiv.innerHTML = `
         <div class="cube-wrapper">
-            <div class="surface top"><span style="color: ${vColorTop}">${visualTop}</span></div>
-            <div class="surface face"><span style="color: ${vColorFace}">${visualFace}</span></div>
-            <div class="surface side"><span style="color: ${vColorSide}">${visualSide}</span></div>
+            <div class="surface top">${vHtmlTop}</div>
+            <div class="surface face">${vHtmlFace}</div>
+            <div class="surface side">${vHtmlSide}</div>
         </div>
     `;
 
@@ -284,18 +384,32 @@ function createCardElement(card, x, y, z) {
 // 4. UI: INTERACTION & WILDS
 // ==========================================
 function handleSurfaceClick(e, x, y, z, logicalName) {
-    if (isDragging || selectedCardIndex === null) return;
+    if (isDragging || selectedCardIndices.length === 0) return;
 
-    const card = gameState.players[gameState.currentPlayerIndex].hand[selectedCardIndex];
+    const currentPlayer = gameState.players[gameState.currentPlayerIndex];
+    const cardsToPlay = selectedCardIndices.map(index => currentPlayer.hand[index]);
+    const firstCard = cardsToPlay[0];
 
-    if (card.value === 'WILD') {
-        if (logicalName !== 'TOP') {
-            showToast("WILD cards can ONLY be placed on TOP surfaces.");
+    // --- 1. COMBO RULE ENFORCEMENT ---
+    if (cardsToPlay.length > 1 && logicalName !== 'SIDE') {
+        triggerErrorFeedback(e.currentTarget, "COMBO RULE: Multiples can only be chained on a SIDE match!");
+        return;
+    }
+
+    // --- 2. WILD CARD ENFORCEMENT ---
+    if (firstCard.value === 'WILD') {
+        if (cardsToPlay.length > 1) {
+            showToast("Cannot combo WILD cards!");
             return;
         }
-        const moveCheck = isValidMove(card, x, y, z);
+        if (logicalName !== 'TOP') {
+            // Shake the invalid surface they clicked
+            triggerErrorFeedback(e.currentTarget, "WILD RULE: Can ONLY be placed on TOP surfaces.");
+            return;
+        }
+        const moveCheck = isValidMove(firstCard, x, y, z);
         if (moveCheck.valid) {
-            pendingWildMove = { card: card, x: x, y: y, z: z };
+            pendingWildMove = { card: firstCard, x: x, y: y, z: z };
             document.getElementById('wildModal').classList.add('show');
             document.getElementById('wildStep1').style.display = 'block';
             document.getElementById('wildStep2').style.display = 'none';
@@ -305,7 +419,9 @@ function handleSurfaceClick(e, x, y, z, logicalName) {
             return;
         }
     }
-    executePlacement(card, x, y, z, e.currentTarget);
+
+    // --- 3. EXECUTE PLACEMENT ---
+    executePlacement(cardsToPlay, x, y, z, e.currentTarget);
 }
 
 window.selectWildSuit = function (chosenSuit) {
@@ -323,7 +439,7 @@ window.resolveWild = function (rotationValue) {
     pendingWildMove.card.wildResolved = true;
 
     document.getElementById('wildModal').classList.remove('show');
-    executePlacement(pendingWildMove.card, pendingWildMove.x, pendingWildMove.y, pendingWildMove.z, null, true);
+    executePlacement([pendingWildMove.card], pendingWildMove.x, pendingWildMove.y, pendingWildMove.z, null, true);
 
     pendingWildMove = null;
     pendingWildSuit = null;
@@ -348,16 +464,45 @@ function updateBoardDisplay() {
 function renderHand() {
     const handDOM = document.getElementById('playerHand');
     handDOM.innerHTML = '';
+    const currentPlayer = gameState.players[gameState.currentPlayerIndex];
     document.getElementById('turnDisplay').innerText = `Player ${gameState.currentPlayerIndex + 1}'s Turn`;
 
-    gameState.players[gameState.currentPlayerIndex].hand.forEach((card, index) => {
+    // Dynamic UH OH Button visibility
+    const btnUhOh = document.getElementById('btnUhOh');
+    const projectedHandSize = currentPlayer.hand.length - selectedCardIndices.length;
+
+    if (projectedHandSize <= 1 || currentPlayer.hand.length <= 2) {
+        btnUhOh.style.display = 'block';
+        btnUhOh.innerText = currentPlayer.hasCalledUhOh ? "CALLED!" : "UH OH!";
+        btnUhOh.style.opacity = currentPlayer.hasCalledUhOh ? "0.5" : "1";
+    } else {
+        btnUhOh.style.display = 'none';
+        currentPlayer.hasCalledUhOh = false; // Reset if hand grows
+    }
+
+    currentPlayer.hand.forEach((card, index) => {
         const div = document.createElement('div');
         div.className = `hand-card suit-${card.suit}`;
         div.innerHTML = `<div>${card.value === 'WILD' ? '' : card.value}</div>
                          <div>${card.value === 'WILD' ? 'W' : SUIT_SYMBOLS[card.suit]}</div>`;
-        if (index === selectedCardIndex) div.classList.add('selected');
+
+        if (selectedCardIndices.includes(index)) div.classList.add('selected');
+
         div.addEventListener('click', () => {
-            selectedCardIndex = selectedCardIndex === index ? null : index;
+            if (selectedCardIndices.includes(index)) {
+                selectedCardIndices = selectedCardIndices.filter(i => i !== index); // Deselect
+            } else {
+                if (selectedCardIndices.length > 0) {
+                    const firstSelected = gameState.players[gameState.currentPlayerIndex].hand[selectedCardIndices[0]];
+                    if ((card.type === 'number' || card.value === '0') && card.value === firstSelected.value) {
+                        selectedCardIndices.push(index);
+                    } else {
+                        selectedCardIndices = [index];
+                    }
+                } else {
+                    selectedCardIndices = [index];
+                }
+            }
             renderHand();
         });
         handDOM.appendChild(div);
@@ -371,7 +516,7 @@ function refreshUI() {
 
 document.getElementById('btnDraw').addEventListener('click', () => {
     gameState.players[gameState.currentPlayerIndex].hand.push(gameState.drawPile.shift());
-    selectedCardIndex = null;
+    selectedCardIndices = [];
     nextTurn();
     refreshUI();
 });
@@ -410,3 +555,10 @@ function triggerErrorFeedback(el, reasonString) {
 }
 
 document.addEventListener("DOMContentLoaded", () => { startGame(2); refreshUI(); });
+
+document.getElementById('btnUhOh').addEventListener('click', () => {
+    const currentPlayer = gameState.players[gameState.currentPlayerIndex];
+    currentPlayer.hasCalledUhOh = true;
+    showToast("UH OH!");
+    refreshUI();
+});

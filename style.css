@@ -4,18 +4,12 @@
 
 :root {
     --bg-color: #1a4f8b;
-    /* Deep STACCS Blue */
     --card-width: 120px;
     --card-height: 138px;
-    /* Approx width * 1.15 for isometric ratio */
 
-    /* Cube Shading Rules */
     --surface-top: #ffffff;
-    /* Always the brightest */
     --surface-face: #e5e7eb;
-    /* Slightly shadowed (Left) */
     --surface-side: #d1d5db;
-    /* Deepest shadow (Right) */
 
     --text-dark: #111827;
     --text-red: #ef4444;
@@ -32,7 +26,6 @@
 body {
     background-color: var(--bg-color);
     overflow: hidden;
-    /* We will handle panning via JS */
     color: white;
 }
 
@@ -41,7 +34,6 @@ body {
     position: absolute;
     width: 100vw;
     height: 100vh;
-    /* This transforms the center of the screen to (0,0) for our isometric math */
     transform-origin: center;
     cursor: grab;
 }
@@ -50,12 +42,11 @@ body {
     cursor: grabbing;
 }
 
-/* --- THE STACCS CARD (HEXAGON CUBE) --- */
+/* --- THE STACCS CARD --- */
 .stacc-card {
     position: absolute;
     width: var(--card-width);
     height: var(--card-height);
-    /* Transform anchor to bottom-center of the hexagon so stacking Z-axis feels grounded */
     transform-origin: 50% 75%;
     transition: transform 0.2s ease, filter 0.2s ease;
     filter: drop-shadow(0px 10px 10px rgba(0, 0, 0, 0.4));
@@ -64,10 +55,8 @@ body {
 .stacc-card:hover {
     filter: drop-shadow(0px 15px 15px rgba(0, 0, 0, 0.6)) brightness(1.1);
     z-index: 9999 !important;
-    /* Pop to front on hover */
 }
 
-/* Base Hexagon Outline */
 .cube-wrapper {
     position: relative;
     width: 100%;
@@ -81,35 +70,29 @@ body {
     width: 100%;
     height: 100%;
     font-weight: 900;
-    font-size: 1.5rem;
 }
 
-.surface span {
-    position: absolute;
+.surface:hover {
+    filter: brightness(1.15);
+    box-shadow: inset 0 0 20px rgba(255, 255, 255, 0.6);
+    z-index: 10;
 }
 
-/* TOP SURFACE (+Z Axis) -> Matching Suits */
 .surface.top {
     background-color: var(--surface-top);
     clip-path: polygon(50% 0%, 100% 25%, 50% 50%, 0% 25%);
-    color: var(--text-dark);
 }
 
-/* FACE SURFACE / Left (+Y Axis) -> Matching Letters (J,Q,K,A) */
 .surface.face {
     background-color: var(--surface-face);
     clip-path: polygon(0% 25%, 50% 50%, 50% 100%, 0% 75%);
-    color: var(--text-dark);
 }
 
-/* SIDE SURFACE / Right (+X Axis) -> Matching Numbers (0-10) */
 .surface.side {
     background-color: var(--surface-side);
     clip-path: polygon(50% 50%, 100% 25%, 100% 75%, 50% 100%);
-    color: var(--text-dark);
 }
 
-/* Suit Colors */
 .suit-hearts,
 .suit-diamonds {
     color: var(--text-red) !important;
@@ -118,26 +101,6 @@ body {
 .suit-spades,
 .suit-clubs {
     color: var(--text-dark) !important;
-}
-
-/* Isometric text positioning and skewing */
-.surface.top span {
-    top: 25%;
-    left: 50%;
-    transform: translate(-50%, -50%) skewX(-30deg) scaleY(0.866) rotate(-30deg);
-    font-size: 2rem;
-}
-
-.surface.face span {
-    top: 62.5%;
-    left: 25%;
-    transform: translate(-50%, -50%) skewY(30deg) scaleX(0.866);
-}
-
-.surface.side span {
-    top: 62.5%;
-    left: 75%;
-    transform: translate(-50%, -50%) skewY(-30deg) scaleX(0.866);
 }
 
 /* --- UI HUD --- */
@@ -151,9 +114,10 @@ body {
     border-radius: 12px;
     display: flex;
     gap: 16px;
-    pointer-events: none;
+    pointer-events: auto;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
     z-index: 10000;
+    align-items: center;
 }
 
 /* --- PLAYER HAND UI --- */
@@ -166,7 +130,6 @@ body {
     gap: 12px;
     z-index: 10001;
     pointer-events: auto;
-    /* Allow clicking cards */
 }
 
 .hand-card {
@@ -192,15 +155,8 @@ body {
 
 .hand-card.selected {
     border-color: #facc15;
-    /* Yellow highlight */
     transform: translateY(-20px) scale(1.1);
     box-shadow: 0 12px 24px rgba(0, 0, 0, 0.5);
-}
-
-/* Make HUD interactive */
-#hud {
-    pointer-events: auto;
-    align-items: center;
 }
 
 .btn-action {
@@ -218,7 +174,6 @@ body {
 }
 
 /* --- ERROR FEEDBACK & UI TOAST --- */
-/* --- ERROR FEEDBACK & UI TOAST --- */
 @keyframes shakeError {
 
     0%,
@@ -232,7 +187,6 @@ body {
         background-color: #fca5a5;
     }
 
-    /* Soft red */
     40%,
     80% {
         transform: translateX(4px);
@@ -270,10 +224,8 @@ body {
 .stacc-card.locked {
     opacity: 0.4;
     pointer-events: none;
-    /* Physically prevents clicking surfaces */
     filter: drop-shadow(0px 2px 4px rgba(0, 0, 0, 0.2)) grayscale(50%);
     z-index: 0 !important;
-    /* Push to back */
 }
 
 #wildModal {
@@ -288,7 +240,6 @@ body {
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
     z-index: 10006;
     display: none;
-    /* Hidden by default */
     text-align: center;
 }
 
@@ -319,3 +270,117 @@ body {
 .suit-btn.black {
     color: var(--text-dark);
 }
+
+
+/* =========================================
+   CLEAN ISOMETRIC TEXT & CORNER INDICES
+   ========================================= */
+
+.watermark,
+.text-content,
+.index-mark {
+    position: absolute;
+    line-height: 0;
+}
+
+.watermark {
+    opacity: 0.25;
+    z-index: 0;
+}
+
+.text-content {
+    z-index: 1;
+    font-weight: 900;
+}
+
+.index-mark {
+    z-index: 2;
+    font-size: 1.25rem;
+    font-weight: 900;
+}
+
+/* --- PHYSICAL TOP (CEILING) --- */
+.surface.top .watermark,
+.surface.top .text-content,
+.surface.top .index-mark {
+    transform: translate(-50%, -50%) skewX(-30deg) scaleY(0.866) rotate(-30deg);
+}
+
+.surface.top .watermark,
+.surface.top .text-content {
+    top: 25%;
+    left: 50%;
+}
+
+.surface.top .watermark {
+    font-size: 4.5rem;
+}
+
+.surface.top .text-content {
+    font-size: 2.5rem;
+}
+
+.surface.top .index-mark {
+    top: 18%;
+    left: 30%;
+}
+
+/* Safely tucked into the left corner */
+
+/* --- PHYSICAL FACE (LEFT) --- */
+.surface.face .watermark,
+.surface.face .text-content,
+.surface.face .index-mark {
+    transform: translate(-50%, -50%) skewY(30deg) scaleX(0.866);
+}
+
+.surface.face .watermark,
+.surface.face .text-content {
+    top: 62.5%;
+    left: 28%;
+}
+
+/* Pushed slightly right for optical balance */
+.surface.face .watermark {
+    font-size: 4.5rem;
+}
+
+.surface.face .text-content {
+    font-size: 2.5rem;
+}
+
+.surface.face .index-mark {
+    top: 40%;
+    left: 16%;
+}
+
+/* Safe top-left */
+
+/* --- PHYSICAL SIDE (RIGHT) --- */
+.surface.side .watermark,
+.surface.side .text-content,
+.surface.side .index-mark {
+    transform: translate(-50%, -50%) skewY(-30deg) scaleX(0.866);
+}
+
+.surface.side .watermark,
+.surface.side .text-content {
+    top: 62.5%;
+    left: 72%;
+}
+
+/* Pushed slightly left for optical balance */
+.surface.side .watermark {
+    font-size: 4.5rem;
+}
+
+.surface.side .text-content {
+    font-size: 2.5rem;
+}
+
+.surface.side .index-mark {
+    top: 40%;
+    left: 84%;
+}
+
+/* Safe top-right */
